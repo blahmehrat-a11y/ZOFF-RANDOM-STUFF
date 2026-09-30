@@ -67,13 +67,18 @@ also have to be made by people before launch (see [Before launch](#before-launch
 3. **Copy nit on slide 12**: the Quora column says "A review must reflect your experience". It
    should probably say "answer".
 
-## Setup (about 20 minutes)
+## Setup (about 10 minutes)
 
 1. Create a Google Sheet, then open **Extensions → Apps Script**.
-2. Copy every file from `apps-script/` into the project (or use
-   [clasp](https://github.com/google/clasp) with `rootDir: apps-script`). Include
-   `appsscript.json`: it sets the time zone to IST and turns on the Drive advanced service,
-   which is used for file MD5s.
+2. Replace everything in `Code.gs` with the contents of
+   [`dist/ZOFF-Champions.gs`](dist/ZOFF-Champions.gs): all the code in one file. Then:
+   - **Project Settings** (gear icon) → tick *Show "appsscript.json" manifest file*, and replace
+     that file with [`dist/appsscript.json`](dist/appsscript.json). It sets the time zone to IST
+     and turns on the Drive service used for file MD5s.
+   - Save.
+
+   (Developers can instead push `apps-script/` with [clasp](https://github.com/google/clasp).
+   Run `npm run bundle` after changing code there.)
 3. Reload the sheet. Choose **ZOFF Champions → Set up (run once)** and grant the permissions it asks
    for. This creates the sheets and the form, and installs four triggers (form submit, edit,
    Friday, daily).
