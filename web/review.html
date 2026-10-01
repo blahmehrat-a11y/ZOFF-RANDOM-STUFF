@@ -1,0 +1,212 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ZOFF Champions Review Desk</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bitter:wght@700;800&family=Figtree:wght@400;500;600;700&display=swap">
+<style>
+/*STYLES*/
+</style>
+</head>
+<body class="desk">
+<div class="wrap">
+  <header class="top">
+    <div class="brand">
+      <div class="logo" aria-hidden="true">ZOFF</div>
+      <div><p class="eyebrow" id="eyebrow">Marketing &amp; HR only</p><h1>Champions Review Desk</h1></div>
+    </div>
+    <div class="who" id="who"></div>
+  </header>
+  <nav class="tabs" role="tablist" id="tabs"></nav>
+  <main id="view"></main>
+</div>
+<div class="toast" id="toast" hidden></div>
+
+<script>
+"use strict";
+// Talks to WebApp.js through google.script.run. Every call carries the reviewer passcode.
+const api = (fn, ...args) => new Promise((resolve, reject) =>
+  google.script.run.withSuccessHandler(resolve).withFailureHandler((e) => reject(new Error((e && e.message) || String(e))))[fn](...args));
+
+const S = { pass: "", name: "", cfg: null, tab: "review", month: "", filter: "Pending", queue: null, board: null, confirm: false };
+const ss = {
+  get(k) { try { return sessionStorage.getItem(k) || ""; } catch (e) { return ""; } },
+  set(k, v) { try { sessionStorage.setItem(k, v); } catch (e) {} }
+};
+const $ = (s) => document.querySelector(s);
+const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const monthLabel = (mk) => { const [y, m] = mk.split("-").map(Number); return new Date(Date.UTC(y, m - 1, 15)).toLocaleString("en-IN", { month: "long", year: "numeric", timeZone: "UTC" }); };
+const istTime = (ms) => new Date(ms).toLocaleString("en-IN", { timeZone: "Asia/Kolkata", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+function toast(msg) { const t = $("#toast"); t.textContent = msg; t.hidden = false; clearTimeout(toast.h); toast.h = setTimeout(() => (t.hidden = true), 3500); }
+const SHORT = { LIKE: "Like", COMMENT: "Comment", SOCIAL_SHARE: "Share", WA_STATUS: "WA Status", FRIENDS_GROUP: "Friends/group", HELPFUL_REPLY: "Helpful reply", ORIGINAL_POST: "Original post", ORIGINAL_REEL: "Original Reel", FACTORY_VIDEO: "Factory video", FACTORY_REEL: "Factory Reel", QUORA_ANSWER: "Quora" };
+const FLAG_TEXT = { NOT_REGISTERED: "Not registered", NO_POST_LINK: "No post link", POST_NOT_IN_DAILY_LIST: "Not in the daily post list", NO_PROOF: "No proof", NO_CLEAN_FILE: "No clean file uploaded", EMAIL_DOES_NOT_MATCH_ID: "Email doesn't match ID" };
+const flagText = (f) => FLAG_TEXT[f] || f.replace(/^ALREADY_CLAIMED/, "Already claimed").replace(/^SAME_FILE_AS/, "Same file as").replace(/^SAME_LINK_AS/, "Same link as");
+
+const TABS = [["review", "Review"], ["posts", "Daily posts"], ["board", "Leaderboard & winners"]];
+
+function render() {
+  $("#who").innerHTML = S.pass ? `<span class="chip gold">${esc(S.name)}</span><button class="ghost" id="signout">Sign out</button>` : "";
+  $("#tabs").innerHTML = S.pass ? TABS.map(([k, l]) => `<button role="tab" id="tab-${k}" data-tab="${k}" aria-selected="${S.tab === k}">${l}${k === "review" && S.queue && S.queue.pending ? `<span class="badge">${S.queue.pending}</span>` : ""}</button>`).join("") : "";
+  $("#view").innerHTML = !S.pass ? viewSignIn() : { review: viewReview, posts: viewPosts, board: viewBoard }[S.tab]();
+}
+
+function viewSignIn() {
+  return `<form class="panel stack signin" id="signinForm" novalidate>
+    <div><p class="eyebrow">Reviewers</p><h2>Sign in to review</h2>
+    <p class="muted small" style="margin-top:6px">Your name is saved with every decision you make.</p></div>
+    <label for="si-name">Your name<input type="text" id="si-name" autocomplete="name" value="${esc(ss.get("zc-name"))}" required></label>
+    <label for="si-pass">Reviewer passcode<input type="password" id="si-pass" autocomplete="current-password" required></label>
+    <button class="primary" type="submit" id="si-go">Sign in</button>
+    <p class="small" id="si-err" style="color:var(--bad)" role="alert"></p>
+  </form>`;
+}
+
+const monthSelect = (id) => `<select id="${id}" aria-label="Month">${S.cfg.months.map((m) => `<option value="${m}" ${m === S.month ? "selected" : ""}>${esc(monthLabel(m))}</option>`).join("")}</select>`;
+
+function viewReview() {
+  const q = S.queue;
+  const head = `<div class="row" style="justify-content:space-between">
+      <div><p class="eyebrow">Marketing checks</p><h2>Review ${esc(monthLabel(S.month))}</h2></div>
+      <div class="row">${monthSelect("month")}
+        <select id="filter" aria-label="Show">${["Pending", "Approved", "Rejected", "All"].map((f) => `<option ${f === S.filter ? "selected" : ""}>${f}</option>`).join("")}</select>
+        <button class="ghost" id="refresh">Refresh</button></div>
+    </div>`;
+  if (!q) { loadQueue(); return head + `<div class="panel empty"><span class="spinner"></span> Loading entries…</div>`; }
+  const groups = new Map(); q.lines.forEach((l) => { if (!groups.has(l.responseId)) groups.set(l.responseId, []); groups.get(l.responseId).push(l); });
+  const rows = [...groups.values()].map((g) => {
+    const f = g[0];
+    const links = f.evidence.map((e) => /^https?:\/\//.test(e) ? `<a href="${esc(e)}" target="_blank" rel="noopener">${esc(e.replace(/^https?:\/\/(www\.)?/, "").slice(0, 60))}</a>` : esc(e)).join("<br>");
+    return `<tr>
+      <td><b>${esc(f.name || f.empId)}</b><br><span class="muted small">${esc(f.empId)}</span><br><span class="muted small num">${esc(istTime(f.at))}</span></td>
+      <td class="links small">${esc(f.brand)} · ${esc(f.entryType)}${f.postKey ? `<br>Post: ${esc(f.postKey)}` : ""}<br>${links || `<span class="flag">No evidence</span>`}</td>
+      <td>${g.map((l) => `<div class="row" style="gap:6px;margin-bottom:8px">
+          <span style="min-width:120px">${esc(SHORT[l.action] || l.action)} <b class="num">${l.points}</b></span>
+          ${q.finalised ? `<span class="chip">${esc(l.decision)}</span>` : `
+          <button class="ghost ok-btn ${l.decision === "Approved" ? "on" : ""}" data-id="${esc(l.id)}" data-d="Approved" aria-label="Approve ${esc(SHORT[l.action])}">✓ Approve</button>
+          <button class="ghost bad-btn ${l.decision === "Rejected" ? "on" : ""}" data-id="${esc(l.id)}" data-d="Rejected" aria-label="Reject ${esc(SHORT[l.action])}">✕ Reject</button>`}
+          ${l.flags.map((x) => `<span class="flag">${esc(flagText(x))}</span>`).join("")}
+          ${l.reviewedBy && l.decision !== "Pending" ? `<span class="muted small">by ${esc(l.reviewedBy)}</span>` : ""}
+          ${l.note ? `<span class="muted small">“${esc(l.note)}”</span>` : ""}</div>`).join("")}
+        ${q.finalised ? "" : `<div class="row" style="gap:6px">
+          <button class="ghost" data-all="${esc(f.responseId)}">Approve all without flags</button>
+          <button class="ghost" data-reject-all="${esc(f.responseId)}">Reject all with a note…</button></div>`}</td>
+    </tr>`;
+  }).join("");
+  return `<div class="stack">${head}
+    <div class="panel stack">
+      <h3>Month end</h3>
+      ${q.finalised ? `<p>${esc(monthLabel(S.month))} is finalised. Its entries are locked; see the Leaderboard & winners tab.</p>` :
+        S.month >= S.cfg.month ? `<p class="muted">Entries close at 11:59 PM IST on the last day. Winners are due by working day ${S.cfg.workingDays[2]} (${esc(q.winnersDue)}).</p>` :
+        `<p>${q.pending ? `<b>${q.pending}</b> entries still need a decision before winners can be picked.` : "Every entry has a decision."} Winners are due by ${esc(q.winnersDue)}.</p>`}
+      ${q.finalised ? "" : S.confirm ? `<div class="row"><button class="primary" id="finalConfirm">Yes, confirm winners</button><button class="secondary" id="finalCancel">Cancel</button><span class="small muted">Runs the tie-break draw, makes certificates and Gmail drafts, and locks the month.</span></div>`
+        : `<div class="row"><button class="primary" id="final" ${q.canFinalise ? "" : "disabled"}>Confirm winners</button></div>`}
+    </div>
+    ${rows ? `<div class="tablebox"><table><thead><tr><th>Person</th><th>Evidence</th><th>Decide each line</th></tr></thead><tbody>${rows}</tbody></table></div>`
+      : `<div class="panel empty">Nothing ${S.filter === "All" ? "" : S.filter.toLowerCase() + " "}for ${esc(monthLabel(S.month))}.</div>`}
+  </div>`;
+}
+
+async function loadQueue() {
+  try { S.queue = await api("apiReviewQueue", S.pass, S.month, S.filter); }
+  catch (e) { handleAuth(e); S.queue = { lines: [], pending: 0, finalised: false, canFinalise: false, winnersDue: "" }; }
+  if (S.tab === "review") render();
+}
+
+async function decide(list) {
+  try {
+    await api("apiDecide", S.pass, S.name, list);
+    list.forEach((d) => { const l = S.queue.lines.find((x) => x.id === d.id); if (l) { l.decision = d.decision; l.reviewedBy = S.name; if (d.note !== undefined) l.note = d.note; } });
+    render(); loadQueue();
+  } catch (e) { handleAuth(e); toast(e.message); }
+}
+
+function viewPosts() {
+  const list = S.cfg.posts;
+  return `<div class="grid2">
+    <form class="panel stack" id="postForm" novalidate>
+      <div><p class="eyebrow">Daily</p><h2>Add today's post</h2><p class="muted small" style="margin-top:6px">Employees see these on their page. Engagement on links not in this list is flagged.</p></div>
+      <label for="p-url">Post link<input type="url" id="p-url" placeholder="https://www.instagram.com/p/…"></label>
+      <label for="p-label">Short label <span class="hint">Optional</span><input type="text" id="p-label" maxlength="80" placeholder="Garam masala reel"></label>
+      <label for="p-brand">Brand<select id="p-brand">${S.cfg.brands.map((b) => `<option>${b}</option>`).join("")}</select></label>
+      <button class="primary" type="submit" id="p-go">Add post</button>
+      <p class="muted small">To fix or remove a post, edit the Posts tab in the Google Sheet.</p>
+    </form>
+    <div class="tablebox"><table><thead><tr><th>Date</th><th>Post</th></tr></thead><tbody>
+      ${list.length ? list.map((p) => `<tr><td class="num">${esc(p.date)}</td><td class="links small">${esc(p.brand)}${p.label ? " · " + esc(p.label) : ""}<br><a href="${esc(p.url)}" target="_blank" rel="noopener">${esc(p.key)}</a></td></tr>`).join("") : `<tr><td colspan="2" class="empty">No posts yet.</td></tr>`}
+    </tbody></table></div>
+  </div>`;
+}
+
+function viewBoard() {
+  const b = S.board;
+  const head = `<div class="row" style="justify-content:space-between"><div><p class="eyebrow">Approved points only</p><h2>${esc(monthLabel(S.month))}</h2></div>${monthSelect("bmonth")}</div>`;
+  if (!b) { api("apiLeaderboard", S.month).then((r) => { S.board = r; if (S.tab === "board") render(); }, (e) => toast(e.message)); return head + `<div class="panel empty"><span class="spinner"></span></div>`; }
+  return `<div class="stack">${head}
+    ${b.winners.length ? `<div class="notice ok"><b>Winners confirmed.</b> Rewards are tracked in the Winners tab of the sheet.</div><div class="tablebox"><table><thead><tr><th>Rank</th><th>Winner</th><th>Prize</th></tr></thead><tbody>
+      ${b.winners.map((w) => `<tr><td class="pos">${esc(w.rank)}</td><td><b>${esc(w.name)}</b></td><td class="prize">${esc(w.prize)}<br><span class="muted small">${esc(w.detail)}${w.useBy ? " · use by " + esc(w.useBy) : ""}</span></td></tr>`).join("")}</tbody></table></div>` : ""}
+    ${b.rows.length ? `<div class="tablebox"><table><thead><tr><th>#</th><th>Name</th><th class="n">Points</th><th class="n">Days</th><th class="n">Posts</th><th>Prize</th></tr></thead><tbody>
+      ${b.rows.map((r) => `<tr><td class="pos">${r.position || ""}</td><td><b>${esc(r.name)}</b></td><td class="n"><b>${r.points}</b></td><td class="n">${r.activeDays}</td><td class="n">${r.posts}</td>
+        <td>${r.prize ? esc(r.prize) : `<span class="muted small">${r.toQualify} to qualify</span>`}${r.drawPending ? ` <span class="chip warn">Tied</span>` : ""}</td></tr>`).join("")}</tbody></table></div>`
+      : `<div class="panel empty">No approved points yet.</div>`}
+  </div>`;
+}
+
+function handleAuth(e) { if (/passcode|attempts/i.test(e.message)) { S.pass = ""; ss.set("zc-pass", ""); render(); } }
+
+document.addEventListener("click", (ev) => {
+  const t = ev.target.closest("button"); if (!t) return;
+  if (t.dataset.tab) { S.tab = t.dataset.tab; S.board = null; render(); }
+  else if (t.id === "signout") { S.pass = ""; ss.set("zc-pass", ""); render(); }
+  else if (t.id === "refresh") { S.queue = null; render(); }
+  else if (t.dataset.id) { const l = S.queue.lines.find((x) => x.id === t.dataset.id); decide([{ id: t.dataset.id, decision: l && l.decision === t.dataset.d ? "Pending" : t.dataset.d }]); }
+  else if (t.dataset.all) {
+    const list = S.queue.lines.filter((l) => l.responseId === t.dataset.all && !l.flags.length && l.decision === "Pending").map((l) => ({ id: l.id, decision: "Approved" }));
+    list.length ? decide(list) : toast("Every line here has a flag. Decide them one by one.");
+  }
+  else if (t.dataset.rejectAll) {
+    const row = t.closest("td"); let box = row.querySelector(".rejectBox");
+    if (!box) { row.insertAdjacentHTML("beforeend", `<div class="row rejectBox" style="gap:6px;margin-top:8px"><input type="text" placeholder="Reason the employee will see" aria-label="Reason"><button class="ghost bad-btn" data-reject-go="${esc(t.dataset.rejectAll)}">Reject all</button></div>`); row.querySelector(".rejectBox input").focus(); }
+  }
+  else if (t.dataset.rejectGo) {
+    const note = t.parentElement.querySelector("input").value.trim();
+    decide(S.queue.lines.filter((l) => l.responseId === t.dataset.rejectGo).map((l) => ({ id: l.id, decision: "Rejected", note })));
+  }
+  else if (t.id === "final") { S.confirm = true; render(); }
+  else if (t.id === "finalCancel") { S.confirm = false; render(); }
+  else if (t.id === "finalConfirm") {
+    t.disabled = true; t.innerHTML = `<span class="spinner"></span> Working…`;
+    api("apiFinalise", S.pass, S.month).then((b) => { S.confirm = false; S.board = b; S.queue = null; S.tab = "board"; toast("Winners confirmed. Check your Gmail drafts."); render(); },
+      (e) => { S.confirm = false; toast(e.message); render(); });
+  }
+});
+document.addEventListener("change", (ev) => {
+  const t = ev.target;
+  if (t.id === "month" || t.id === "bmonth") { S.month = t.value; S.queue = null; S.board = null; S.confirm = false; render(); }
+  else if (t.id === "filter") { S.filter = t.value; S.queue = null; render(); }
+});
+document.addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  if (ev.target.id === "signinForm") {
+    const name = $("#si-name").value.trim(), pass = $("#si-pass").value;
+    if (!name) { $("#si-err").textContent = "Enter your name."; return; }
+    $("#si-go").disabled = true; $("#si-err").textContent = "";
+    try { S.cfg = await api("apiReviewSignIn", pass); S.pass = pass; S.name = name; S.month = S.cfg.month; ss.set("zc-pass", pass); ss.set("zc-name", name); render(); }
+    catch (e) { $("#si-err").textContent = e.message; $("#si-go").disabled = false; }
+  } else if (ev.target.id === "postForm") {
+    $("#p-go").disabled = true;
+    try { S.cfg.posts = await api("apiAddPost", S.pass, $("#p-url").value.trim(), $("#p-brand").value, $("#p-label").value.trim()); toast("Post added."); render(); }
+    catch (e) { handleAuth(e); toast(e.message); $("#p-go").disabled = false; }
+  }
+});
+
+(async function boot() {
+  const pass = ss.get("zc-pass");
+  if (pass) {
+    try { S.cfg = await api("apiReviewSignIn", pass); S.pass = pass; S.name = ss.get("zc-name") || "Reviewer"; S.month = S.cfg.month; } catch (e) { ss.set("zc-pass", ""); }
+  }
+  render();
+})();
+</script>
+</body>
+</html>
