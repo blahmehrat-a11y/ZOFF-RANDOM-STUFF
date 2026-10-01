@@ -5,13 +5,51 @@
 function onOpen() {
   SpreadsheetApp.getUi().createMenu('ZOFF Champions')
     .addItem('Set up (run once)', 'setup')
+    .addItem('Set reviewer passcode…', 'menuSetPasscode')
+    .addItem('Give PINs to employees without one', 'menuGeneratePins')
     .addSeparator()
     .addItem('Rebuild this month\'s leaderboard', 'menuRebuildThisMonth')
     .addItem('Rebuild last month\'s leaderboard', 'menuRebuildLastMonth')
     .addItem('Pick up missed form responses', 'syncAllResponses')
     .addItem('Run the daily month-end check now', 'dailyTick')
     .addItem('Finalise a month now…', 'menuFinalise')
+    .addSeparator()
+    .addItem('Optional: also create a Google Form', 'menuCreateForm')
     .addToUi();
+}
+
+function menuSetPasscode() {
+  var ui = SpreadsheetApp.getUi();
+  var r = ui.prompt('Reviewer passcode', 'Marketing and HR type this on the review page. Use at least 8 characters.', ui.ButtonSet.OK_CANCEL);
+  if (r.getSelectedButton() !== ui.Button.OK) return;
+  var code = r.getResponseText().trim();
+  if (code.length < 8) { ui.alert('Use at least 8 characters.'); return; }
+  PropertiesService.getScriptProperties().setProperty('REVIEW_PASSCODE', code);
+  audit_('Reviewer passcode changed');
+  ui.alert('Saved. Share it only with Marketing and HR reviewers.');
+}
+
+/** Fills a random 4-digit PIN for every employee row that has an ID but no PIN. */
+function menuGeneratePins() {
+  var sh = sheet_(SHEETS.EMPLOYEES);
+  var col = col_(SHEETS.EMPLOYEES, 'PIN');
+  var n = 0;
+  readObjects_(SHEETS.EMPLOYEES).forEach(function (r) {
+    if (text_(r['Employee ID']) && !text_(r.PIN)) {
+      sh.getRange(r._row, col).setNumberFormat('@').setValue(String(1000 + Math.floor(Math.random() * 9000)));
+      n++;
+    }
+  });
+  toast_(n ? 'Added ' + n + ' PINs. Send each person their own PIN privately.' : 'Everyone already has a PIN.');
+}
+
+function menuCreateForm() {
+  var s = getSettings_();
+  if (s[SETTING_KEYS.FORM_ID]) { SpreadsheetApp.getUi().alert('A form already exists: ' + FormApp.openById(s[SETTING_KEYS.FORM_ID]).getEditUrl()); return; }
+  var form = createForm_();
+  setSetting_(SETTING_KEYS.FORM_ID, form.getId(), 'Created from the menu');
+  installTriggers_(form.getId());
+  SpreadsheetApp.getUi().alert('Form created: ' + form.getEditUrl() + '\nAdd the two File upload questions by hand (see README).');
 }
 
 function menuRebuildThisMonth() { rebuildLeaderboard(monthKeyIST(new Date())); toast_('Leaderboard updated.'); }
@@ -36,24 +74,15 @@ function setup() {
   formatSheets_();
   seedSettings_();
 
-  var s = getSettings_();
-  var formId = s[SETTING_KEYS.FORM_ID];
-  if (!formId) {
-    var form = createForm_();
-    formId = form.getId();
-    setSetting_(SETTING_KEYS.FORM_ID, formId, 'Created by setup');
-    audit_('Created form ' + form.getEditUrl());
-  }
-  installTriggers_(formId);
+  installTriggers_(getSettings_()[SETTING_KEYS.FORM_ID]);
+  proofFolder_();
 
-  var form2 = FormApp.openById(formId);
   SpreadsheetApp.getUi().alert('ZOFF Champions is set up.\n\n' +
-    'Two things Apps Script cannot do for you:\n' +
-    '1. Open the form and add two File upload questions titled exactly:\n' +
-    '   "' + Q.PROOF_FILES + '" (end of the engagement section)\n' +
-    '   "' + Q.ORIGINAL_FILES + '" (end of the original content section, required)\n' +
-    '2. Fill in the Employees sheet and the Settings sheet (holidays, Marketing emails, certificate template).\n\n' +
-    'Form: ' + form2.getEditUrl() + '\nShare this link with employees: ' + form2.getPublishedUrl());
+    'Next:\n' +
+    '1. Fill in the Employees sheet (ID, name, email, tick Eligible), then ZOFF Champions > Give PINs to employees.\n' +
+    '2. ZOFF Champions > Set reviewer passcode.\n' +
+    '3. In Apps Script: Deploy > New deployment > Web app. Execute as: Me. Who has access: Anyone.\n' +
+    '   The URL it gives you is the employee page. Add ?page=review to the end for the Marketing & HR page.');
 }
 
 function seedSettings_() {
@@ -87,6 +116,7 @@ function formatSheets_() {
   var emp = sheet_(SHEETS.EMPLOYEES);
   emp.getRange(2, col_(SHEETS.EMPLOYEES, 'Employee ID'), emp.getMaxRows() - 1, 1).setNumberFormat('@');
   emp.getRange(2, col_(SHEETS.EMPLOYEES, 'Eligible'), emp.getMaxRows() - 1, 1).insertCheckboxes();
+  emp.getRange(2, col_(SHEETS.EMPLOYEES, 'PIN'), emp.getMaxRows() - 1, 1).setNumberFormat('@');
 
   var winners = sheet_(SHEETS.WINNERS);
   winners.getRange(2, 1, winners.getMaxRows() - 1, 1).setNumberFormat('@');
@@ -154,7 +184,7 @@ function installTriggers_(formId) {
   ScriptApp.getProjectTriggers().forEach(function (t) {
     if (TRIGGER_HANDLERS_.indexOf(t.getHandlerFunction()) !== -1) ScriptApp.deleteTrigger(t);
   });
-  ScriptApp.newTrigger('onFormSubmitHandler').forForm(formId).onFormSubmit().create();
+  if (formId) ScriptApp.newTrigger('onFormSubmitHandler').forForm(formId).onFormSubmit().create();
   ScriptApp.newTrigger('onSheetEdit').forSpreadsheet(ss_()).onEdit().create();
   ScriptApp.newTrigger('fridayUpdate').timeBased().onWeekDay(ScriptApp.WeekDay.FRIDAY)
     .atHour(CONFIG.FRIDAY_HOUR).inTimezone(CONFIG.TIMEZONE).create();

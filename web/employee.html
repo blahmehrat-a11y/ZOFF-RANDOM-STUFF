@@ -1,0 +1,265 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ZOFF Champions</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bitter:wght@700;800&family=Figtree:wght@400;500;600;700&display=swap">
+<style>
+/*STYLES*/
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <div class="brand">
+      <div class="logo" aria-hidden="true">ZOFF</div>
+      <div><p class="eyebrow" id="eyebrow">Every month · ₹20,000 in rewards</p><h1>ZOFF Champions</h1></div>
+    </div>
+    <div class="who" id="who"></div>
+  </header>
+  <nav class="tabs" role="tablist" id="tabs"></nav>
+  <main id="view"><div class="panel empty"><span class="spinner"></span> Loading…</div></main>
+</div>
+<div class="toast" id="toast" hidden></div>
+
+<script>
+"use strict";
+// Talks to WebApp.js through google.script.run. Employees sign in with Employee ID + PIN.
+const api = (fn, ...args) => new Promise((resolve, reject) =>
+  google.script.run.withSuccessHandler(resolve).withFailureHandler((e) => reject(new Error((e && e.message) || String(e))))[fn](...args));
+
+const S = { cfg: null, emp: null, mine: null, board: null, tab: "submit", type: "ENGAGEMENT", busy: false, boardMonth: "" };
+const store = {
+  get(k) { try { return JSON.parse(localStorage.getItem(k)); } catch (e) { return null; } },
+  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} },
+  del(k) { try { localStorage.removeItem(k); } catch (e) {} }
+};
+const $ = (s) => document.querySelector(s);
+const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const monthLabel = (mk) => { const [y, m] = mk.split("-").map(Number); return new Date(Date.UTC(y, m - 1, 15)).toLocaleString("en-IN", { month: "long", year: "numeric", timeZone: "UTC" }); };
+const istTime = (ms) => new Date(ms).toLocaleString("en-IN", { timeZone: "Asia/Kolkata", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+function toast(msg) { const t = $("#toast"); t.textContent = msg; t.hidden = false; clearTimeout(toast.h); toast.h = setTimeout(() => (t.hidden = true), 3500); }
+const SHORT = { LIKE: "Like", COMMENT: "Comment", SOCIAL_SHARE: "Share", WA_STATUS: "WA Status", FRIENDS_GROUP: "Friends/group", HELPFUL_REPLY: "Helpful reply", ORIGINAL_POST: "Original post", ORIGINAL_REEL: "Original Reel", FACTORY_VIDEO: "Factory video", FACTORY_REEL: "Factory Reel", QUORA_ANSWER: "Quora" };
+
+const TABS = [["submit", "Send proof"], ["posts", "Today's posts"], ["board", "Leaderboard"], ["mine", "My points"], ["rules", "How it works"]];
+
+function render() {
+  $("#who").innerHTML = S.emp ? `<span class="chip">${esc(S.emp.name || S.emp.id)}</span><button class="ghost" id="signout">Sign out</button>` : "";
+  $("#tabs").innerHTML = TABS.map(([k, l]) => `<button role="tab" id="tab-${k}" data-tab="${k}" aria-selected="${S.tab === k}">${l}</button>`).join("");
+  if (!S.cfg) return;
+  const needsSignIn = (S.tab === "submit" || S.tab === "mine") && !S.emp;
+  $("#view").innerHTML = needsSignIn ? viewSignIn() : { submit: viewSubmit, posts: viewPosts, board: viewBoard, mine: viewMine, rules: viewRules }[S.tab]();
+  if (S.tab === "submit" && S.emp) syncForm();
+}
+
+function viewSignIn() {
+  return `<form class="panel stack signin" id="signinForm" novalidate>
+    <div><p class="eyebrow">Sign in</p><h2>Who's taking part?</h2>
+    <p class="muted small" style="margin-top:6px">Use your Employee ID and the 4-digit PIN Marketing sent you.</p></div>
+    <label for="si-id">Employee ID<input type="text" id="si-id" autocomplete="username" required></label>
+    <label for="si-pin">PIN<input type="password" id="si-pin" inputmode="numeric" autocomplete="current-password" required></label>
+    <button class="primary" type="submit" id="si-go">Sign in</button>
+    <p class="small" id="si-err" style="color:var(--bad)" role="alert"></p>
+  </form>`;
+}
+
+function viewSubmit() {
+  const c = S.cfg; const t = S.type;
+  const opt = (name, type, code, checked) => `<label class="opt" for="${name}-${code}"><input type="${type}" name="${name}" id="${name}-${code}" value="${code}" ${checked ? "checked" : ""}><span>${esc(c.actions[code].label)}</span><span class="pts">${c.actions[code].points}</span></label>`;
+  return `<form id="submitForm" class="stack" novalidate>
+    <div class="panel stack">
+      <div><p class="eyebrow">One entry per post</p><h2>Send your proof</h2>
+      <p class="muted small" style="margin-top:6px">Marketing checks every entry. Only approved entries reach the leaderboard. Hide other people's names and numbers in screenshots.</p></div>
+      <fieldset><legend>What is this entry for?</legend><div class="seg">
+        ${[["ENGAGEMENT", "A daily post"], ["ORIGINAL", "My original content"], ["QUORA", "A Quora answer"]].map(([k, l]) => `<label for="ty-${k}"><input type="radio" name="etype" id="ty-${k}" value="${k}" ${t === k ? "checked" : ""}>${l}</label>`).join("")}
+      </div></fieldset>
+      <fieldset><legend>ZOFF or Akash?</legend><div class="seg">${c.brands.map((b, i) => `<label for="br-${b}"><input type="radio" name="brand" id="br-${b}" value="${b}" ${i === 0 ? "checked" : ""}>${b}</label>`).join("")}</div></fieldset>
+    </div>
+    <div class="panel stack" data-show="ENGAGEMENT">
+      <label for="f-post">Post link <span class="hint">The daily link Marketing shared</span><input type="url" id="f-post" placeholder="https://www.instagram.com/p/…"></label>
+      ${c.posts.length ? `<select id="f-postpick" aria-label="Pick a recent post"><option value="">Or pick a recent post…</option>${c.posts.map((p) => `<option value="${esc(p.url)}">${esc(p.date)} · ${esc(p.brand)} · ${esc(p.label || p.key)}</option>`).join("")}</select>` : ""}
+      <fieldset><legend>What did you do? <span class="muted" style="font-weight:400">Each counts once per post</span></legend>${c.engagement.map((a) => opt("act", "checkbox", a)).join("")}</fieldset>
+      <label for="f-replies">Helpful WhatsApp replies <span class="hint">Separate conversations where you answered a real question · 5 points each</span><input type="number" id="f-replies" min="0" max="50" value="0" inputmode="numeric"></label>
+    </div>
+    <div class="panel stack" data-show="ORIGINAL">
+      <fieldset><legend>What did you create?</legend>${c.original.map((a, i) => opt("otype", "radio", a, i === 0)).join("")}</fieldset>
+      <label for="f-desc">Describe it in one line<input type="text" id="f-desc" maxlength="300"></label>
+      <label for="f-link">Or a Drive link to the clean file <span class="hint">Use this for big videos instead of uploading</span><input type="url" id="f-link" placeholder="https://drive.google.com/…"></label>
+      <label class="opt" for="f-mine"><input type="checkbox" id="f-mine"><span>I made this myself for this programme, beyond my assigned work, and it is not a re-edit of something I already entered.</span></label>
+    </div>
+    <div class="panel stack" data-show="QUORA">
+      <label for="f-quora">Quora answer link<input type="url" id="f-quora" placeholder="https://www.quora.com/…/answer/…"></label>
+      <label class="opt" for="f-disclose"><input type="checkbox" id="f-disclose"><span>My answer says I work at ZOFF and reflects my own experience.</span><span class="pts">20</span></label>
+    </div>
+    <div class="panel stack" data-show="ENGAGEMENT ORIGINAL">
+      <label for="f-files"><span data-show="ENGAGEMENT">Screenshots</span><span data-show="ORIGINAL">The clean file</span> <span class="hint">Up to 20 MB in total</span>
+        <input type="file" id="f-files" multiple accept="image/*,video/*,application/pdf"></label>
+      <p class="filelist" id="f-filelist"></p>
+      <label for="f-proof">Proof links <span class="hint">Optional. Links to your comment or share, one per line.</span><textarea id="f-proof"></textarea></label>
+    </div>
+    <div class="row"><button class="primary" type="submit" id="f-submit">Send for review</button><span class="muted small" id="f-claim"></span></div>
+    <p class="small" id="f-error" style="color:var(--bad)" role="alert"></p>
+  </form>`;
+}
+
+function syncForm() {
+  document.querySelectorAll("[data-show]").forEach((el) => (el.hidden = !el.dataset.show.split(" ").includes(S.type)));
+  const a = S.cfg.actions; let pts = 0;
+  if (S.type === "ENGAGEMENT") {
+    document.querySelectorAll("input[name=act]:checked").forEach((c) => (pts += a[c.value].points));
+    pts += Math.max(0, Math.min(50, Math.floor(Number($("#f-replies").value) || 0))) * a.HELPFUL_REPLY.points;
+  } else if (S.type === "ORIGINAL") { const o = document.querySelector("input[name=otype]:checked"); pts = o ? a[o.value].points : 0; }
+  else pts = a.QUORA_ANSWER.points;
+  $("#f-claim").textContent = pts ? `Up to ${pts} points once approved` : "";
+  const files = [...($("#f-files").files || [])];
+  $("#f-filelist").textContent = files.map((f) => `${f.name} (${(f.size / 1048576).toFixed(1)} MB)`).join(", ");
+}
+
+const readFile = (f) => new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res({ name: f.name, mimeType: f.type, data: String(r.result).split(",")[1] }); r.onerror = rej; r.readAsDataURL(f); });
+
+async function submit(ev) {
+  ev.preventDefault();
+  const err = $("#f-error"); err.textContent = "";
+  const files = [...($("#f-files").files || [])];
+  if (files.reduce((s, f) => s + f.size, 0) > 20 * 1048576) { err.textContent = "Files are over 20 MB. Upload fewer, or paste a Drive link instead."; return; }
+  const p = { entryType: S.type, brand: (document.querySelector("input[name=brand]:checked") || {}).value, proofLinks: $("#f-proof").value };
+  if (S.type === "ENGAGEMENT") {
+    p.postUrl = $("#f-post").value.trim();
+    p.actions = [...document.querySelectorAll("input[name=act]:checked")].map((c) => c.value);
+    p.helpfulReplies = $("#f-replies").value;
+  } else if (S.type === "ORIGINAL") {
+    p.originalType = document.querySelector("input[name=otype]:checked").value;
+    p.description = $("#f-desc").value; p.contentUrl = $("#f-link").value.trim(); p.confirmed = $("#f-mine").checked;
+  } else { p.quoraUrl = $("#f-quora").value.trim(); p.confirmed = $("#f-disclose").checked; }
+  const btn = $("#f-submit"); btn.disabled = true; btn.innerHTML = `<span class="spinner"></span> Sending…`;
+  try {
+    p.files = S.type === "QUORA" ? [] : await Promise.all(files.map(readFile));
+    const r = await api("apiSubmit", S.emp.id, S.emp.pin, p);
+    S.mine = r.mine; toast("Sent. Marketing will review it."); render();
+  } catch (e) {
+    err.textContent = e.message; btn.disabled = false; btn.textContent = "Send for review";
+    if (/PIN/.test(e.message)) signOut();
+  }
+}
+
+function viewPosts() {
+  const sent = {}; (S.mine ? S.mine.items : []).forEach((i) => i.postKey && (sent[i.postKey] = true));
+  const list = S.cfg.posts;
+  return `<div class="stack">
+    <div><p class="eyebrow">Marketing shares links daily</p><h2>Today's posts</h2><p class="muted small" style="margin-top:6px">Like, comment or share any of these, then send your proof. Each post can earn up to 20 points.</p></div>
+    ${list.length ? `<div class="tablebox"><table><thead><tr><th>Date</th><th>Post</th><th></th></tr></thead><tbody>
+      ${list.map((p) => `<tr><td class="num">${esc(p.date)}</td><td class="links"><b>${esc(p.brand)}</b>${p.label ? " · " + esc(p.label) : ""}<br><a href="${esc(p.url)}" target="_blank" rel="noopener">${esc(p.key)}</a></td>
+        <td>${sent[p.key] ? `<span class="chip ok">Sent</span>` : `<button class="ghost" data-proof="${esc(p.url)}">Send proof</button>`}</td></tr>`).join("")}
+    </tbody></table></div>` : `<div class="panel empty">No posts yet. Marketing adds each day's ZOFF and Akash links here.</div>`}
+  </div>`;
+}
+
+function viewBoard() {
+  const b = S.board;
+  if (!b) { loadBoard(S.boardMonth || S.cfg.month); return `<div class="panel empty"><span class="spinner"></span> Loading the leaderboard…</div>`; }
+  const cut = b.rows.findIndex((r) => !r.qualified);
+  return `<div class="stack">
+    <div class="row" style="justify-content:space-between">
+      <div><p class="eyebrow">One monthly leaderboard</p><h2>${esc(monthLabel(b.month))}</h2></div>
+      <select id="boardMonth" aria-label="Month">${S.cfg.months.map((m) => `<option value="${m}" ${m === b.month ? "selected" : ""}>${esc(monthLabel(m))}</option>`).join("")}</select>
+    </div>
+    ${b.winners.length ? `<div class="notice ok"><b>Winners confirmed</b></div><div class="tablebox"><table><thead><tr><th>Rank</th><th>Winner</th><th>Prize</th></tr></thead><tbody>
+      ${b.winners.map((w) => `<tr><td class="pos">${esc(w.rank)}</td><td><b>${esc(w.name)}</b></td><td class="prize">${esc(w.prize)}<br><span class="muted small">${esc(w.detail)}${w.useBy ? " · use by " + esc(w.useBy) : ""}</span></td></tr>`).join("")}</tbody></table></div>`
+      : b.pending ? `<div class="notice">${b.pending} ${b.pending === 1 ? "entry is" : "entries are"} waiting for review. Scores count approved entries only.</div>` : ""}
+    ${b.rows.length ? `<div class="tablebox"><table><thead><tr><th>#</th><th>Name</th><th class="n">Points</th><th class="n">Active days</th><th class="n">Posts</th><th>Prize</th></tr></thead><tbody>
+      ${b.rows.map((r, i) => `<tr class="${i === cut && i > 0 ? "cut" : ""}"><td class="pos">${r.position || ""}</td><td><b>${esc(r.name)}</b>${S.emp && r.name === S.emp.name ? ` <span class="chip">You</span>` : ""}</td>
+        <td class="n"><b>${r.points}</b></td><td class="n">${r.activeDays}</td><td class="n">${r.posts}</td>
+        <td>${r.prize ? `<span class="prize">${esc(r.prize)}</span><br><span class="muted small">${esc(r.detail)}</span>` : `<span class="muted small">${r.toQualify} to qualify</span>`}${r.drawPending ? `<br><span class="chip warn">Tied · draw at month end</span>` : ""}</td></tr>`).join("")}
+    </tbody></table></div>` : `<div class="panel empty">No approved points for ${esc(monthLabel(b.month))} yet.</div>`}
+    <p class="muted small">${S.cfg.qualify} approved points gets you into the prize ranking. Ties go to more active days, then more different posts, then a recorded draw.</p>
+  </div>`;
+}
+
+async function loadBoard(month) {
+  try { S.board = await api("apiLeaderboard", month); } catch (e) { S.board = { month, rows: [], winners: [], pending: 0 }; toast(e.message); }
+  if (S.tab === "board") render();
+}
+
+function viewMine() {
+  const m = S.mine; if (!m) return `<div class="panel empty"><span class="spinner"></span></div>`;
+  const q = S.cfg.qualify; const pct = Math.min(100, (m.points / q) * 100);
+  const groups = new Map(); m.items.forEach((i) => { if (!groups.has(i.responseId)) groups.set(i.responseId, []); groups.get(i.responseId).push(i); });
+  return `<div class="stack">
+    <div class="panel stack">
+      <div><p class="eyebrow">${esc(monthLabel(m.month))}</p><h2>Your points</h2></div>
+      <div class="stats">
+        <div class="stat"><span class="muted small">Approved</span><b>${m.points}</b></div>
+        <div class="stat"><span class="muted small">Waiting for review</span><b>${m.pendingPoints}</b></div>
+        <div class="stat"><span class="muted small">Position</span><b>${m.position ? "#" + m.position : "–"}</b></div>
+      </div>
+      <div><div class="bar" role="img" aria-label="${m.points} of ${q} points to qualify"><i style="width:${pct}%"></i></div>
+      <p class="small muted" style="margin-top:6px">${m.points >= q ? "You're in the prize ranking. Keep going: the highest verified scores win." : `${q - m.points} more approved points to enter the prize ranking. That's about ${Math.ceil((q - m.points) / 20)} more full posts.`}</p></div>
+    </div>
+    ${groups.size ? `<div class="tablebox"><table><thead><tr><th>Sent</th><th>Status</th></tr></thead><tbody>
+      ${[...groups.values()].map((g) => `<tr><td class="num">${esc(istTime(g[0].at))}${g[0].postKey ? `<br><span class="muted small links">${esc(g[0].postKey)}</span>` : ""}</td>
+        <td>${g.map((i) => `<span class="chip ${i.status === "Approved" ? "ok" : i.status === "Rejected" ? "bad" : ""}">${esc(SHORT[i.action] || i.action)} · ${i.status === "Approved" ? (i.counted === 0 ? "counted already" : "+" + i.points) : esc(i.status)}</span>`).join(" ")}
+        ${g.filter((i) => i.note).map((i) => `<br><span class="small muted">${esc(i.note)}</span>`).join("")}</td></tr>`).join("")}
+    </tbody></table></div>` : `<div class="panel empty">You haven't sent anything yet. Like, comment on or share a daily post, then use "Send proof".</div>`}
+  </div>`;
+}
+
+function viewRules() {
+  const c = S.cfg; const a = c.actions;
+  const rows = (codes) => codes.map((k) => `<div>${esc(a[k].label)}</div><div>${a[k].points}</div>`).join("");
+  return `<div class="grid2">
+    <div class="stack">
+      <div class="panel stack"><h2>Daily posts</h2><p class="muted small">Marketing shares links from ZOFF and Akash. The first five actions count once per post.</p>
+        <div class="pointsTable">${rows(c.engagement.concat(["HELPFUL_REPLY"]))}</div>
+        <p class="muted small">Friends and groups share one 5-point allowance per post. Helpful replies count once per conversation.</p></div>
+      <div class="panel stack"><h2>Your original content</h2><div class="pointsTable">${rows(c.original.concat(["QUORA_ANSWER"]))}</div>
+        <p class="muted small">Made by you. Clear to see or hear. Relevant to ZOFF or Akash. Each original counts once; a new edit or the same post on another channel does not earn again. Google reviews sit outside reward points.</p></div>
+    </div>
+    <div class="stack">
+      <div class="panel stack"><h2>Monthly prizes</h2><p class="muted small">${c.qualify} approved points gets you into the prize ranking. One prize or time-off perk each.</p>
+        <div class="tablebox"><table><tbody>${c.prizes.map((p) => `<tr><td class="pos">${p.rank}</td><td class="prize">${esc(p.name)}</td><td>${esc(p.detail)}</td></tr>`).join("")}</tbody></table></div>
+        <p class="muted small">Ties: more active days, then more different posts supported, then a recorded draw. Time off is used within ${c.timeOffDays} days, with your manager.</p></div>
+      <div class="panel stack"><h2>The monthly rhythm</h2>
+        <p><b>Daily:</b> new post links. <b>Any time:</b> send proof here. <b>Month end:</b> entries close at 11:59 PM IST on the last day. <b>Next month:</b> final scores by working day ${c.workingDays[0]}, queries by day ${c.workingDays[1]}, winners by day ${c.workingDays[2]}. Points reset every month.</p></div>
+    </div>
+  </div>`;
+}
+
+function signOut() { S.emp = null; S.mine = null; store.del("zc-emp"); render(); }
+
+document.addEventListener("click", (ev) => {
+  const t = ev.target.closest("button"); if (!t) return;
+  if (t.dataset.tab) { S.tab = t.dataset.tab; store.set("zc-tab", S.tab); if (S.tab === "board") S.board = null; render(); }
+  else if (t.id === "signout") signOut();
+  else if (t.dataset.proof) { S.tab = "submit"; S.type = "ENGAGEMENT"; render(); if ($("#f-post")) $("#f-post").value = t.dataset.proof; }
+});
+document.addEventListener("change", (ev) => {
+  const t = ev.target;
+  if (t.name === "etype") { S.type = t.value; syncForm(); }
+  else if (t.id === "f-postpick" && t.value) $("#f-post").value = t.value;
+  else if (t.id === "boardMonth") { S.boardMonth = t.value; S.board = null; render(); }
+  else if (t.name === "act" || t.name === "otype" || t.id === "f-files") syncForm();
+});
+document.addEventListener("input", (ev) => { if (ev.target.id === "f-replies") syncForm(); });
+document.addEventListener("submit", async (ev) => {
+  if (ev.target.id === "submitForm") return submit(ev);
+  if (ev.target.id !== "signinForm") return;
+  ev.preventDefault();
+  const id = $("#si-id").value.trim(), pin = $("#si-pin").value.trim();
+  $("#si-go").disabled = true; $("#si-err").textContent = "";
+  try { const r = await api("apiSignIn", id, pin); S.emp = { id: r.id, name: r.name, pin }; S.mine = r.mine; store.set("zc-emp", S.emp); render(); }
+  catch (e) { $("#si-err").textContent = e.message; $("#si-go").disabled = false; }
+});
+
+(async function boot() {
+  S.tab = store.get("zc-tab") || "submit";
+  try { S.cfg = await api("apiConfig"); } catch (e) { $("#view").innerHTML = `<div class="notice bad">${esc(e.message)}</div>`; return; }
+  const saved = store.get("zc-emp");
+  if (saved && saved.id && saved.pin) {
+    try { S.mine = await api("apiMine", saved.id, saved.pin); S.emp = saved; } catch (e) { store.del("zc-emp"); }
+  }
+  render();
+})();
+</script>
+</body>
+</html>

@@ -11,7 +11,7 @@ also have to be made by people before launch (see [Before launch](#before-launch
 
 | Deck item | Status | How |
 |---|---|---|
-| One form per post: ZOFF/Akash, tick actions, links, screenshots (15) | ✅ Automated | `setup` builds the Google Form with sections. You add the 2 file-upload questions by hand, because Apps Script cannot create them |
+| One form per post: ZOFF/Akash, tick actions, links, screenshots (15) | ✅ Automated | Employee web page with Employee ID + PIN sign-in and screenshot upload. A Google Form is an optional alternative |
 | Points table: 1 / 4 / 5 / 5 / 5, helpful reply 5 (9) | ✅ Automated | Rules in `Config.js`, enforced at scoring |
 | "First five count once per post", "once per conversation" (9) | ✅ Automated | Enforced when scoring, across months, even if a duplicate was approved by mistake |
 | Originals 25 / 50 / 50, factory Reel 50 in total, each counts once (10) | ✅ Automated | The same file is caught by its Drive MD5 and the same link after normalising it. Re-edits are for the reviewer to judge |
@@ -67,42 +67,44 @@ also have to be made by people before launch (see [Before launch](#before-launch
 3. **Copy nit on slide 12**: the Quora column says "A review must reflect your experience". It
    should probably say "answer".
 
-## Setup (about 10 minutes)
+## Setup (about 15 minutes)
+
+Everything runs from one Google Sheet. Staff and reviewers use two web pages that the sheet
+serves, so nobody needs a Claude account, and staff don't need a Google account either.
 
 1. Create a Google Sheet, then open **Extensions → Apps Script**.
-2. Replace everything in `Code.gs` with the contents of
-   [`dist/ZOFF-Champions.gs`](dist/ZOFF-Champions.gs): all the code in one file. Then:
-   - **Project Settings** (gear icon) → tick *Show "appsscript.json" manifest file*, and replace
-     that file with [`dist/appsscript.json`](dist/appsscript.json). It sets the time zone to IST
-     and turns on the Drive service used for file MD5s.
-   - Save.
+2. Replace everything in `Code.gs` with [`dist/ZOFF-Champions.gs`](dist/ZOFF-Champions.gs).
+   In **Project Settings** (gear icon), tick *Show "appsscript.json" manifest file*, then replace
+   that file with [`dist/appsscript.json`](dist/appsscript.json). Save.
+3. Reload the sheet. Choose **ZOFF Champions → Set up (run once)** and click Allow on each Google
+   prompt.
+4. Fill in **Employees** (ID, name, email, tick `Eligible`). Then choose
+   **ZOFF Champions → Give PINs to employees without one** and send each person their PIN privately.
+5. Choose **ZOFF Champions → Set reviewer passcode…** and share it only with Marketing and HR.
+6. In Apps Script: **Deploy → New deployment → Web app**. Set *Execute as* to **Me** and
+   *Who has access* to **Anyone**, then deploy.
+   - The URL it gives you is the **employee page**.
+   - The same URL with `?page=review` on the end is the **Marketing & HR page**.
+7. Optional: fill in **Settings** (`MARKETING_EMAILS`, `HOLIDAYS`, `WEEKEND_DAYS`, and
+   `CERT_TEMPLATE_ID` + `CERT_FOLDER_ID` for certificates).
 
-   (Developers can instead push `apps-script/` with [clasp](https://github.com/google/clasp).
-   Run `npm run bundle` after changing code there.)
-3. Reload the sheet. Choose **ZOFF Champions → Set up (run once)** and grant the permissions it asks
-   for. This creates the sheets and the form, and installs four triggers (form submit, edit,
-   Friday, daily).
-4. In the form editor, add two **File upload** questions titled exactly:
-   - `Proof screenshots`, at the end of the *Engagement* section
-   - `Clean original file`, at the end of the *Your original content* section. Mark it required.
-5. Fill in **Settings**: `MARKETING_EMAILS`, `HOLIDAYS`, `WEEKEND_DAYS`, and optionally
-   `CERT_TEMPLATE_ID` + `CERT_FOLDER_ID`. The template is a Slides file with `{{NAME}}`,
-   `{{PRIZE}}`, `{{RANK}}`, `{{MONTH}}`, `{{POINTS}}`. `PUBLIC_SHEET_ID` is optional: a
-   spreadsheet shared view-only with staff.
-6. Add registered staff to **Employees** and tick `Eligible`. Paste each day's links into **Posts**.
+After changing the code later, use **Deploy → Manage deployments → Edit → New version** so the
+same links keep working.
 
-The form must be restricted to your Google Workspace domain. File uploads need sign-in, and the
-signed-in email is checked against the Employee ID.
+Uploaded screenshots and files are saved to a Drive folder called *ZOFF Champions proof*, which
+only you can see. Reviewers open them through the links on the review page. Prefer a Google Form
+instead? **ZOFF Champions → Optional: also create a Google Form** still works, and both routes feed
+the same Review sheet.
 
 ## Marketing's routine
 
-- **Daily**: paste new post links into *Posts*. In *Review*, filter `Decision = Pending`, check
-  the evidence and flags, and choose Approved or Rejected.
+- **Daily**: on the review page, add the day's post links (*Daily posts*), then approve or reject
+  entries (*Review*). Every decision is signed with the reviewer's name and logged.
 - **Friday**: a draft email with the leaderboard is waiting in Gmail. Check it and send it.
 - **Working day 2**: a final-scores draft arrives. If entries are still pending, it says so at the top.
-- **Working day 5**: once nothing is pending, winners are picked automatically. You get a
-  draft announcement, Winners rows, PDF certificates, a Draw log entry and an archive sheet. Then
-  arrange the rewards and update `Fulfilment status`.
+- **Working day 5**: once nothing is pending, winners are picked automatically, or press *Confirm
+  winners* on the review page. You get a draft announcement, Winners rows, PDF certificates, a Draw
+  log entry and an archive sheet. Then arrange the rewards and update `Fulfilment status`.
 
 ## Code layout
 
@@ -110,10 +112,12 @@ signed-in email is checked against the Employee ID.
 |---|---|
 | `apps-script/Config.js` | Every number and label from the deck |
 | `apps-script/Rules.js` | Pure logic: scoring, dedupe, flags, ranking and draw, IST dates, working days, link normalising. No Google APIs |
-| `apps-script/Intake.js` | Form response → Review lines |
+| `apps-script/Intake.js` | Web or form submission → flagged Review lines |
 | `apps-script/Leaderboard.js` | Approval stamping and audit, leaderboard, public copy |
 | `apps-script/MonthEnd.js` | Friday, final scores, winners, draw log, archive, certificates, reminders |
-| `apps-script/Setup.js` | Menu, sheets, form, triggers |
+| `apps-script/Setup.js` | Menu, sheets, PINs, passcode, optional form, triggers |
+| `apps-script/WebApp.js` | The two web pages' server side: sign-in, submissions, uploads, review, leaderboard |
+| `web/employee.html`, `web/review.html` | The two pages (built into `apps-script/Pages.js` by `npm run bundle`) |
 | `apps-script/Store.js` | Sheet read/write helpers |
 
 ## Tests
@@ -122,7 +126,7 @@ signed-in email is checked against the Employee ID.
 npm test
 ```
 
-Runs the rule tests plus a full month end to end against an in-memory fake of Sheets, Gmail and
+Runs the rule tests, the web app server calls (sign-in, uploads, review, finalising) and a full month end to end against an in-memory fake of Sheets, Gmail and
 Drive (`tests/fake-gas.js`). The Google services themselves (form creation, triggers, Slides
 export) have not been run against a real Google account. Do a dry run with a test sheet before
 launch.

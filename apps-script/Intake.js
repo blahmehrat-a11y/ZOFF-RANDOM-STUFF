@@ -19,7 +19,9 @@ function syncAllResponses() {
   var lock = LockService.getScriptLock();
   lock.waitLock(30000);
   try {
-    var form = FormApp.openById(getSettings_()[SETTING_KEYS.FORM_ID]);
+    var formId = getSettings_()[SETTING_KEYS.FORM_ID];
+    if (!formId) { toast_('No Google Form is set up. Entries come in through the web app.'); return; }
+    var form = FormApp.openById(formId);
     var ctx = buildIntakeContext_();
     var added = 0;
     form.getResponses().forEach(function (resp) {
@@ -48,18 +50,25 @@ function buildIntakeContext_() {
 /** @return {number} line items added */
 function processResponse_(response, ctx) {
   if (ctx.seenResponses[response.getId()]) return 0;
-  var parsed = parseFormResponse_(response);
+  return recordSubmission_(parseFormResponse_(response), response.getId(), ctx);
+}
+
+/**
+ * Shared by the Google Form and the web app: one parsed submission -> flagged Review lines.
+ * @return {number} line items added
+ */
+function recordSubmission_(parsed, fullId, ctx) {
   var items = expandSubmission(parsed);
   if (!items.length) {
-    audit_('Response ' + response.getId() + ' from ' + parsed.email + ' had nothing to score');
-    ctx.seenResponses[response.getId()] = true;
+    audit_('Submission ' + fullId + ' from ' + (parsed.email || parsed.employeeId) + ' had nothing to score');
+    ctx.seenResponses[fullId] = true;
     return 0;
   }
   flagItems(items, ctx.existing, ctx);
 
   var employee = ctx.employees[items[0].employeeId];
   items.forEach(function (it) {
-    it.fullResponseId = response.getId();
+    it.fullResponseId = fullId;
     // The Employee ID is typed by hand, so check it belongs to the signed-in person.
     if (employee && employee.email && it.email && employee.email !== it.email) it.flags.unshift('EMAIL_DOES_NOT_MATCH_ID');
     if (parsed.description) it.evidence.unshift('“' + parsed.description + '”');
@@ -67,7 +76,7 @@ function processResponse_(response, ctx) {
 
   appendRows_(SHEETS.REVIEW, items.map(function (it) { return reviewRow_(it, employee); }));
   ctx.existing = ctx.existing.concat(items);
-  ctx.seenResponses[response.getId()] = true;
+  ctx.seenResponses[fullId] = true;
   return items.length;
 }
 

@@ -108,7 +108,7 @@ var Q = {
 
 var SHEETS = {
   SETTINGS: { name: 'Settings', headers: ['Key', 'Value', 'Notes'] },
-  EMPLOYEES: { name: 'Employees', headers: ['Employee ID', 'Name', 'Email', 'Manager email', 'Registered on', 'Eligible'] },
+  EMPLOYEES: { name: 'Employees', headers: ['Employee ID', 'Name', 'Email', 'Manager email', 'Registered on', 'Eligible', 'PIN'] },
   POSTS: { name: 'Posts', headers: ['Date shared', 'Brand', 'Post link', 'Post key', 'Notes'] },
   REVIEW: { name: 'Review', headers: [
     'Item ID', 'Response ID', 'Submitted (IST)', 'Month', 'Activity date', 'Employee ID', 'Name', 'Email',
@@ -135,6 +135,7 @@ var SETTING_KEYS = {
   CERT_TEMPLATE_ID: 'CERT_TEMPLATE_ID',
   CERT_FOLDER_ID: 'CERT_FOLDER_ID',
   PUBLIC_SHEET_ID: 'PUBLIC_SHEET_ID',
+  PROOF_FOLDER_ID: 'PROOF_FOLDER_ID',
   FINAL_SCORES_DONE: 'FINAL_SCORES_DONE_FOR',
   FINALISED: 'FINALISED_THROUGH'
 };

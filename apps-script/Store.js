@@ -104,7 +104,8 @@ function readEmployees_() {
       name: text_(r.Name),
       email: text_(r.Email).toLowerCase(),
       manager: text_(r['Manager email']),
-      eligible: r.Eligible === true || /^(true|yes|y)$/i.test(text_(r.Eligible))
+      eligible: r.Eligible === true || /^(true|yes|y)$/i.test(text_(r.Eligible)),
+      pin: text_(r.PIN)
     };
   });
   return byId;

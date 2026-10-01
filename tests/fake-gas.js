@@ -61,7 +61,13 @@ module.exports = function fakeGas(nowIso) {
     getId: () => 'SS'
   };
   const chain = new Proxy({}, { get: () => () => chain });
+  const cache = {}; const props = {}; const files = {}; let fileSeq = 0;
+  const folder = (id) => ({ getId: () => id, createFile: (blob) => { const fid = 'file' + (++fileSeq); files[fid] = blob; return { getId: () => fid }; } });
   const ctx = vm.createContext({
+    CacheService: { getScriptCache: () => ({ get: (k) => (k in cache ? cache[k] : null), put: (k, v) => { cache[k] = v; } }) },
+    PropertiesService: { getScriptProperties: () => ({ getProperty: (k) => (k in props ? props[k] : null), setProperty: (k, v) => { props[k] = v; } }) },
+    DriveApp: { createFolder: () => folder('folder1'), getFolderById: (id) => folder(id) },
+    HtmlService: { createHtmlOutput: (html) => { const o = { html, title: '', setTitle: (t) => { o.title = t; return o; }, addMetaTag: () => o }; return o; } },
     Date: FakeDate, console,
     SpreadsheetApp: { getActive: () => ss, newDataValidation: () => chain },
     Session: { getActiveUser: () => ({ getEmail: () => 'marketing@zoff.test' }) },
@@ -72,6 +78,8 @@ module.exports = function fakeGas(nowIso) {
       DigestAlgorithm: { SHA_256: 'sha256' }, Charset: { UTF_8: 'utf8' },
       computeDigest: (alg, s) => [...crypto.createHash(alg).update(s, 'utf8').digest()].map((b) => (b > 127 ? b - 256 : b)),
       getUuid: () => crypto.randomUUID(),
+      base64Decode: (b64) => [...Buffer.from(b64, 'base64')],
+      newBlob: (bytes, mimeType, name) => ({ bytes, mimeType, name }),
       formatDate: (d) => new Date(d.getTime() + 330 * 60000).toISOString().slice(0, 16).replace('T', ' ')
     }
   });
@@ -79,7 +87,7 @@ module.exports = function fakeGas(nowIso) {
   for (const f of fs.readdirSync(dir).filter((f) => f.endsWith('.js'))) {
     vm.runInContext(fs.readFileSync(path.join(dir, f), 'utf8'), ctx, { filename: f });
   }
-  return { G: ctx, sheets, drafts, setNow: (iso) => { now = new Date(iso).getTime(); } };
+  return { G: ctx, sheets, drafts, files, props, setNow: (iso) => { now = new Date(iso).getTime(); } };
 };
 
 /** A FormResponse-shaped object. */
